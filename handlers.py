@@ -21,6 +21,7 @@ class Form(StatesGroup):
     add_expense_amount = State()
     statement_start_date = State()
     statement_end_date = State()
+    choose_bank = State()
 
 
 async def start_command(message: types.Message):
@@ -81,8 +82,12 @@ async def request_statement(message: types.Message):
 async def custom_income_category(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
         data['custom_income_category'] = message.text
-    await message.answer("Введите сумму:")
-    await Form.add_income_amount.set()
+    if message.text == "Назад":
+        await state.finish()
+        await begin_command(message)
+    else:
+        await message.answer("Введите сумму:")
+        await Form.add_income_amount.set()
 
 
 async def save_income(message: types.Message, state: FSMContext):
@@ -108,8 +113,12 @@ async def save_income(message: types.Message, state: FSMContext):
 async def custom_expense_category(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
         data['custom_expense_category'] = message.text
-    await message.answer("Введите сумму:")
-    await Form.add_expense_amount.set()
+    if message.text == "Назад":
+        await state.finish()
+        await begin_command(message)
+    else:
+        await message.answer("Введите сумму:")
+        await Form.add_expense_amount.set()
 
 
 async def save_expense(message: types.Message, state: FSMContext):
@@ -154,13 +163,8 @@ async def get_statement_end_date(message: types.Message, state: FSMContext):
         data['end_date'] = message.text
     if re.search("^(0[0-9]|1[0-9]|2[0-9]|3[0-1])(.|-)(0[1-9]|1[0-2])(.|-|)20[0-9][0-9]$",
                  data['end_date']) and datetime.strptime(data['start_date'], '%d.%m.%Y') < datetime.strptime(
-            data['end_date'], '%d.%m.%Y'):
-        media = MediaGroup()
-        media.attach(InputMediaDocument(open('pdf.pdf', 'rb')))
-        await message.reply_media_group(media=media)
-        await message.answer('Выписка получена')
-        await state.finish()
-        await begin_command(message)
+        data['end_date'], '%d.%m.%Y'):
+        await choose_bank(message)
     else:
         if message.text == "Назад":
             await state.finish()
@@ -170,6 +174,33 @@ async def get_statement_end_date(message: types.Message, state: FSMContext):
             kb.add("Назад")
             await message.answer("Введите корректную дату окончания", reply_markup=kb)
             await Form.statement_end_date.set()
+
+
+async def choose_bank(message: types.Message):
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton(text="Банк 1", callback_data="bank_1"))
+    kb.add(types.InlineKeyboardButton(text="Банк 2", callback_data="bank_2"))
+    await message.answer("Выберите банк для получения выписки:", reply_markup=kb)
+
+
+async def process_bank_choice(callback_query: types.CallbackQuery, state: FSMContext):
+    bank_choice = callback_query.data
+    async with state.proxy() as data:
+        data['bank_choice'] = bank_choice
+
+    if bank_choice == "bank_1":
+        media = MediaGroup()
+        media.attach(InputMediaDocument(open('pdf.pdf', 'rb')))
+        await callback_query.message.reply_media_group(media=media)
+        await callback_query.answer("Выписка получена для Банк 1")
+    elif bank_choice == "bank_2":
+        await callback_query.answer("Пока получить выписку из этого банка не получится")
+        kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        kb.add("Назад")
+        await callback_query.message.answer("Выберите действие:", reply_markup=kb)
+
+    await state.finish()
+    await begin_command(callback_query.message)
 
 
 def register_handlers(dp: Dispatcher):
@@ -185,3 +216,4 @@ def register_handlers(dp: Dispatcher):
     dp.register_message_handler(save_expense, state=Form.add_expense_amount)
     dp.register_message_handler(get_statement_start_date, state=Form.statement_start_date)
     dp.register_message_handler(get_statement_end_date, state=Form.statement_end_date)
+    dp.register_callback_query_handler(process_bank_choice, Text(startswith="bank_"))
